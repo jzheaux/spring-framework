@@ -16,9 +16,18 @@
 
 package org.springframework.test.web.servlet.setup;
 
+import jakarta.servlet.ServletRegistration;
+import jakarta.servlet.http.HttpServletMapping;
+import jakarta.servlet.http.MappingMatch;
+
+import org.springframework.mock.web.MockHttpServletMapping;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MockMvcBuilder;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
+import org.springframework.util.ClassUtils;
 import org.springframework.web.context.WebApplicationContext;
+import org.springframework.web.servlet.DispatcherServlet;
 import org.springframework.web.servlet.function.RouterFunction;
 
 /**
@@ -49,7 +58,7 @@ public final class MockMvcBuilders {
 	 * {@link jakarta.servlet.ServletContext ServletContext}.
 	 */
 	public static DefaultMockMvcBuilder webAppContextSetup(WebApplicationContext context) {
-		return new DefaultMockMvcBuilder(context);
+		return new DefaultMockMvcBuilder(context).apply(servletMapping());
 	}
 
 	/**
@@ -96,4 +105,43 @@ public final class MockMvcBuilders {
 		return new RouterFunctionMockMvcBuilder(routerFunctions);
 	}
 
+	private static MockMvcConfigurer servletMapping() {
+		return new DispatcherServletMappingMockMvcConfigurer();
+	}
+
+	private static final class DispatcherServletMappingMockMvcConfigurer implements RequestPostProcessor, MockMvcConfigurer {
+
+		@Override
+		public RequestPostProcessor beforeMockMvcCreated(ConfigurableMockMvcBuilder<?> builder, WebApplicationContext context) {
+			return this;
+		}
+
+		@Override
+		public MockHttpServletRequest postProcessRequest(MockHttpServletRequest request) {
+			String matchValue = request.getRequestURI();
+			if (matchValue == null) {
+				return request;
+			}
+			for (ServletRegistration registration : request.getServletContext().getServletRegistrations().values()) {
+				if (isDispatcherServlet(registration)) {
+					String servlet = registration.getName();
+					String pattern = registration.getMappings().iterator().next();
+					HttpServletMapping mapping = new MockHttpServletMapping(matchValue, pattern, servlet, MappingMatch.PATH);
+					request.setHttpServletMapping(mapping);
+					return request;
+				}
+			}
+			return request;
+		}
+
+		private static boolean isDispatcherServlet(ServletRegistration registration) {
+			try {
+				Class<?> dispatcherServlet = ClassUtils.forName(registration.getClassName(), null);
+				return DispatcherServlet.class.isAssignableFrom(dispatcherServlet);
+			}
+			catch (Exception ex) {
+				return false;
+			}
+		}
+	}
 }
